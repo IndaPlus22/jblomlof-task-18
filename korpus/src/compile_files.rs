@@ -1,27 +1,32 @@
+/* MAKE SURE ALL CONSTANTS ARE SET IN "main.rs" */
+
+
 use encoding_rs::{mem::convert_utf8_to_latin1_lossy, WINDOWS_1252};
 use encoding_rs_io::DecodeReaderBytesBuilder;
 use std::{
-    fs::{create_dir, OpenOptions},
+    time,
+    fs::{create_dir, create_dir_all, OpenOptions},
     io::{BufRead, BufReader, Write},
 };
 
 use crate::hash_func::lazy_hash;
 
-/*THIS NEEDS TO BE THE FILEPATH FROM WHERE YOU EXECUTE THE PROGRAM */
-const TOKEN_FILE: &str = "helper_files/token.txt";
-
-/*MAKE SURE THIS DIRECTORY EXISTS */
-//setting to v2 to see if v1 and v2 match, I changed what way we store the shit
-const FILE_LOCATION: &str = "helper_files/index_files_v2/";
-
-const MASTER: &str = "MASTER";
+use crate::MASTER;
+use crate::TOKEN_FILE;
+use crate::FILE_LOCATION;
 
 pub fn compile_that_shit() {
+    println!("STARTING COMPILE. TIME WILL BE REGISTERED.");
+    println!("NOTE: YOUR ANTIMALEWARE MIGHT GO APE SHIT. LOOK IN TASKMANAGER (OR SIMILAR) AND I ADVISE TO TURN IT OFF TO SPEED UP COMPILATION.");
+    let start = time::Instant::now();
+    create_dir_all(FILE_LOCATION).unwrap();
     let table = read_token_file();
 
     for vec in &table {
         create_file_for_hash(vec);
     }
+
+    println!("COMPILING COMPLETE\nTook: {} seconds", start.elapsed().as_secs());
 }
 
 /// Read the token file and retrieve a hash table.
@@ -91,12 +96,6 @@ fn create_file_for_hash((longest_key_len, vec): &(usize, Vec<(String, usize)>)) 
     let len_of_entry = *longest_key_len;
     let mut amount_of_entries_as_slice = convert_to_u8_but_werid(vec.len());
     let len_of_entry_as_slice = convert_to_u8_but_werid(len_of_entry);
-    /*println!(
-        "HASHING: {}, ENTRIES: {}, LENGTH_1: {}",
-        hash_string,
-        vec.len(),
-        *longest_key_len
-    );*/
 
     // We are just gonna dump everything into amount_of_entries..
     /*Write a header containg <amount of entries> <bytes per entry> */
