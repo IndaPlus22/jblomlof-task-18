@@ -1,19 +1,22 @@
+/**
+ * Program to fast get the amount of uses of a word and the context of the usage.
+ * See: https://github.com/IndaPlus22/AssignmentInstructions-Rust/tree/master/structures-task-18
+ * Author: Jonathan Blomlöf <jblomlof@kth.se>
+ */
 /* MAKE SURE ALL CONSTANTS ARE SET IN "main.rs" */
 
-
-use encoding_rs::{mem::convert_utf8_to_latin1_lossy, WINDOWS_1252};
-use encoding_rs_io::DecodeReaderBytesBuilder;
 use std::{
-    time,
     fs::{create_dir, create_dir_all, OpenOptions},
     io::{BufRead, BufReader, Write},
+    time,
 };
 
 use crate::hash_func::lazy_hash;
-
+use crate::map_latin_one;
+use crate::FILE_LOCATION;
 use crate::MASTER;
 use crate::TOKEN_FILE;
-use crate::FILE_LOCATION;
+
 
 pub fn compile_that_shit() {
     println!("STARTING COMPILE. TIME WILL BE REGISTERED.");
@@ -26,34 +29,39 @@ pub fn compile_that_shit() {
         create_file_for_hash(vec);
     }
 
-    println!("COMPILING COMPLETE\nTook: {} seconds", start.elapsed().as_secs());
+    println!(
+        "COMPILING COMPLETE\nTook: {} seconds",
+        start.elapsed().as_secs()
+    );
 }
 
 /// Read the token file and retrieve a hash table.
-/// Each hash has stores(<amount of chars in longest word>, Vec<(<key>, <value>)>)
-fn read_token_file() -> Vec<(usize, Vec<(String, usize)>)> {
+/// Each hash has stores(<amount of chars in longest word>, Vec<(<key>, Vec<values>)>)
+fn read_token_file() -> Vec<(usize, Vec<(String, Vec<usize>)>)> {
     /*
     Inspired from my task-hash
     */
 
-    //the table stores a (String, usize) where the string is the word and the usize is the first instance of the word.
-    let mut table: Vec<(usize, Vec<(String, usize)>)> = Vec::new();
+    //the table stores a (size_of_longest_key, Vec<(key, vec<values>)>)
+    let mut table: Vec<(usize, Vec<(String, Vec<usize>)>)> = Vec::new();
 
     let file = OpenOptions::new().read(true).open(TOKEN_FILE).unwrap();
 
     // Decoder provided in task
-    let mut buf = BufReader::new(
-        DecodeReaderBytesBuilder::new()
-            .encoding(Some(WINDOWS_1252))
-            .build(file),
-    );
+    let mut buf = BufReader::new(file);
     let mut line = String::new();
     let mut prev = String::new();
-    let mut sum_of_bytes_read = 0;
-    let mut _current_line_size = buf.read_line(&mut line).unwrap();
-    while _current_line_size != 0 {
-        let key = line.split_once(" ").unwrap().0;
-        let hash = lazy_hash(key);
+
+    while buf.read_line(&mut line).unwrap() > 0 {
+        let _temp = line.split_once(" ").unwrap();
+        let key = map_latin_one::map_from_token_to_latin( _temp.0.trim());
+       /* DEBUG PRINT
+        let _t_vec: Vec<u8> = key.bytes().collect();
+        for c in _t_vec {
+            print!("{} - {}, ", c, c as char);
+        }*/
+        let value = _temp.1.trim();
+        let hash = lazy_hash(&key);
         if hash >= table.len() {
             //the hash is larger then available hashes just increase the sizes.
             table.resize(hash + 1, (0, Vec::new()))
@@ -62,23 +70,29 @@ fn read_token_file() -> Vec<(usize, Vec<(String, usize)>)> {
 
         if prev != key {
             // it wasnt last, meaning its new.
-
             // We store the key and how many bytes we need to traverse to find the first instance of the key
-            table[hash].1.push((key.to_string(), sum_of_bytes_read));
+            table[hash].1.push((key.to_string(), Vec::new()));
             if table[hash].0 < key.len() {
                 table[hash].0 = key.len();
             }
         }
+        // we push the value regardless if its new or not.
+        // or well rather we know that the last key we in out hash is def corresponding to our value.
+        table[hash]
+            .1
+            .last_mut()
+            .unwrap()
+            .1
+            .push(value.parse().unwrap());
+
         prev = key.to_string();
         line = String::new();
-        sum_of_bytes_read += _current_line_size;
-        _current_line_size = buf.read_line(&mut line).unwrap();
     }
     table
 }
 
 #[allow(unused_must_use)]
-fn create_file_for_hash((longest_key_len, vec): &(usize, Vec<(String, usize)>)) {
+fn create_file_for_hash((longest_key_len, vec): &(usize, Vec<(String, Vec<usize>)>)) {
     if vec.len() == 0 {
         return;
     }
@@ -107,11 +121,8 @@ fn create_file_for_hash((longest_key_len, vec): &(usize, Vec<(String, usize)>)) 
     for entry in vec {
         // first we write the key in masterfile
 
-        // This should work, but if doesn't i blame references.
-        let mut clone = entry.0.clone();
-        let write_bytes = unsafe { clone.as_bytes_mut() };
-        convert_utf8_to_latin1_lossy(entry.0.as_bytes(), write_bytes);
-        amount_of_entries_as_slice.extend_from_slice(write_bytes);
+
+        amount_of_entries_as_slice.extend_from_slice(entry.0.as_bytes());
 
         // write trailing 0 after the key
         for _ in 0..(len_of_entry - entry.0.len()) {
@@ -124,8 +135,15 @@ fn create_file_for_hash((longest_key_len, vec): &(usize, Vec<(String, usize)>)) 
             .write(true)
             .open(FILE_LOCATION.to_string() + hash_string + "/" + &file_count.to_string())
             .unwrap();
-        let value = entry.1.to_be_bytes();
-        value_file.write_all(&value[(entry.1.leading_zeros() / 8) as usize..value.len()]);
+        let mut write_buf: Vec<u8> = Vec::new();
+        for _val in &entry.1 {
+            let value = _val.to_be_bytes();
+            write_buf.extend_from_slice(&value[(_val.leading_zeros() / 8) as usize..value.len()]);
+            //add blank space
+            write_buf.push(0);
+        }
+        value_file.write_all(&write_buf);
+
         file_count += 1;
     }
     file.write_all(&amount_of_entries_as_slice);
@@ -172,7 +190,6 @@ fn sort_into_tree(vec: &mut Vec<(String, usize)>) -> (usize, usize, Vec<(String,
 
 //converts a usize to a vec with u8 such that they are in base u8::MAX
 fn convert_to_u8_but_werid(value: usize) -> Vec<u8> {
-    
     let mut _vec: Vec<u8> = Vec::new();
     let mut _current_val = 0;
     loop {

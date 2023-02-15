@@ -1,6 +1,8 @@
-/*
-Putting hash in a seperete file because why not?!
-*/
+/**
+ * Program to fast get the amount of uses of a word and the context of the usage.
+ * See: https://github.com/IndaPlus22/AssignmentInstructions-Rust/tree/master/structures-task-18
+ * Author: Jonathan Blomlöf <jblomlof@kth.se>
+ */
 
 //setting it to a prime.
 const MULTIPLIER: usize = 17;
