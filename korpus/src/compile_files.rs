@@ -4,7 +4,6 @@
  * Author: Jonathan Blomlöf <jblomlof@kth.se>
  */
 /* MAKE SURE ALL CONSTANTS ARE SET IN "main.rs" */
-
 use std::{
     fs::{create_dir, create_dir_all, OpenOptions},
     io::{BufRead, BufReader, Write},
@@ -14,9 +13,9 @@ use std::{
 use crate::hash_func::lazy_hash;
 use crate::map_latin_one;
 use crate::FILE_LOCATION;
-use crate::MASTER;
+use crate::KEYS;
 use crate::TOKEN_FILE;
-
+use crate::VALUES;
 
 pub fn compile_that_shit() {
     println!("STARTING COMPILE. TIME WILL BE REGISTERED.");
@@ -43,7 +42,7 @@ fn read_token_file() -> Vec<(usize, Vec<(String, Vec<usize>)>)> {
     */
 
     //the table stores a (size_of_longest_key, Vec<(key, vec<values>)>)
-    let mut table: Vec<(usize, Vec<(String, Vec<usize>)>)> = Vec::new();
+    let mut table: Vec<(usize, Vec<(String, Vec<usize>)>)> = Vec::with_capacity(7000);
 
     let file = OpenOptions::new().read(true).open(TOKEN_FILE).unwrap();
 
@@ -54,12 +53,7 @@ fn read_token_file() -> Vec<(usize, Vec<(String, Vec<usize>)>)> {
 
     while buf.read_line(&mut line).unwrap() > 0 {
         let _temp = line.split_once(" ").unwrap();
-        let key = map_latin_one::map_from_token_to_latin( _temp.0.trim());
-       /* DEBUG PRINT
-        let _t_vec: Vec<u8> = key.bytes().collect();
-        for c in _t_vec {
-            print!("{} - {}, ", c, c as char);
-        }*/
+        let key = map_latin_one::map_from_token_to_latin(_temp.0.trim());
         let value = _temp.1.trim();
         let hash = lazy_hash(&key);
         if hash >= table.len() {
@@ -71,7 +65,9 @@ fn read_token_file() -> Vec<(usize, Vec<(String, Vec<usize>)>)> {
         if prev != key {
             // it wasnt last, meaning its new.
             // We store the key and how many bytes we need to traverse to find the first instance of the key
-            table[hash].1.push((key.to_string(), Vec::new()));
+            table[hash]
+                .1
+                .push((key.to_string(), Vec::with_capacity(50)));
             if table[hash].0 < key.len() {
                 table[hash].0 = key.len();
             }
@@ -96,110 +92,118 @@ fn create_file_for_hash((longest_key_len, vec): &(usize, Vec<(String, Vec<usize>
     if vec.len() == 0 {
         return;
     }
+
+    //stores the len of each entry as bytes
+    let mut amount_of_bytes_to_read_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(vec.len());
+
+    let mut max_to_read = 0;
+
+    // stores what byte in VALUES where our values starts, as bytes
+    let mut pointers_as_bytes: Vec<Vec<u8>> = Vec::with_capacity(vec.len());
+    let mut _passed: usize = 0;
+
+    // stacking all the values on top of eachother with <0> in between.
+    // we also store info about it in the above variables.
+    let mut write_bytes_for_value: Vec<u8> = Vec::new();
+
+    for entry in vec {
+        // the amount of bytes in value entry
+        let mut len_of_value_entry = 0;
+        for value in &entry.1 {
+            let _bytes = convert_to_base_255_as_bytes(*value);
+            write_bytes_for_value.extend_from_slice(&_bytes);
+            write_bytes_for_value.push(0);
+
+            len_of_value_entry += 1 + _bytes.len();
+        }
+
+        max_to_read = max_to_read.max(len_of_value_entry);
+        let len_of_value_entry_as_bytes = convert_to_base_255_as_bytes(len_of_value_entry);
+        amount_of_bytes_to_read_as_bytes.push(len_of_value_entry_as_bytes);
+
+        let pointer_as_bytes = convert_to_base_255_as_bytes(_passed);
+        pointers_as_bytes.push(pointer_as_bytes);
+
+        _passed += len_of_value_entry
+    }
+    let max_to_read_as_bytes = convert_to_base_255_as_bytes(max_to_read).len();
+    let max_amount_of_bytes_in_pointer = pointers_as_bytes.last().unwrap().len();
+    let len_of_entry =
+        *longest_key_len + 1 + max_to_read_as_bytes + 1 + max_amount_of_bytes_in_pointer;
+
+    /*Write a header containg <amount of entries> <bytes per entry> */
+    //start with writing the amount of entries
+    let mut key_write_bytes = convert_to_base_255_as_bytes(vec.len());
+    key_write_bytes.push(0);
+    key_write_bytes.extend_from_slice(&convert_to_base_255_as_bytes(len_of_entry));
+    key_write_bytes.push(0);
+    /*Then for each entrie we write <name____>  //we fill with blankspace.*/
+    for (index, entry) in vec.iter().enumerate() {
+        // first we write the key
+        key_write_bytes.extend_from_slice(entry.0.as_bytes());
+
+        // write trailing 0 after the key so that length is of max_key
+        for _ in 0..(*longest_key_len - entry.0.len()) {
+            key_write_bytes.push(0);
+        }
+        //blank
+        key_write_bytes.push(0);
+
+        //more leading 0
+        for _ in 0..(max_to_read_as_bytes - amount_of_bytes_to_read_as_bytes[index].len()) {
+            key_write_bytes.push(0);
+        }
+
+        //write how many to read
+        key_write_bytes.extend_from_slice(&amount_of_bytes_to_read_as_bytes[index]);
+        key_write_bytes.push(0);
+
+        //write more 0's
+        for _ in 0..(max_amount_of_bytes_in_pointer - pointers_as_bytes[index].len()) {
+            key_write_bytes.push(0);
+        }
+        //write the pointer
+        key_write_bytes.extend_from_slice(&pointers_as_bytes[index]);
+    }
+
     let hash_string = &lazy_hash(&vec[0].0).to_string();
-    let file_location = FILE_LOCATION.to_string() + hash_string;
+    let file_location = FILE_LOCATION.to_string() + hash_string + "/";
     // create FILE_LOCATION/hash_string/
-    // and file FILE_LOCATION/hash_string/MASTER which contains all keys.
+    // and file FILE_LOCATION/hash_string/KEYS which contains all keys and the amount of bytes to look in for in VALUES
+    // and file FILE_LOCATON/hash_string/VALUES which contains all
     create_dir(&file_location);
-    let mut file = OpenOptions::new()
+
+    let mut key_file = OpenOptions::new()
         .create(true)
         .write(true)
-        .open(file_location + "/" + MASTER)
+        .open(file_location.clone() + KEYS)
         .unwrap();
 
-    let len_of_entry = *longest_key_len;
-    let mut amount_of_entries_as_slice = convert_to_u8_but_werid(vec.len());
-    let len_of_entry_as_slice = convert_to_u8_but_werid(len_of_entry);
+    key_file.write_all(&key_write_bytes);
 
-    // We are just gonna dump everything into amount_of_entries..
-    /*Write a header containg <amount of entries> <bytes per entry> */
-    amount_of_entries_as_slice.push(0);
-    amount_of_entries_as_slice.extend_from_slice(&len_of_entry_as_slice);
-    amount_of_entries_as_slice.push(0);
-    /*Then for each entrie we write <name____>  //we fill with blankspace.*/
-    let mut file_count = 0;
-    for entry in vec {
-        // first we write the key in masterfile
-
-
-        amount_of_entries_as_slice.extend_from_slice(entry.0.as_bytes());
-
-        // write trailing 0 after the key
-        for _ in 0..(len_of_entry - entry.0.len()) {
-            amount_of_entries_as_slice.push(0);
-        }
-
-        //then we write into the value file
-        let mut value_file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .open(FILE_LOCATION.to_string() + hash_string + "/" + &file_count.to_string())
-            .unwrap();
-        let mut write_buf: Vec<u8> = Vec::new();
-        for _val in &entry.1 {
-            let value = _val.to_be_bytes();
-            write_buf.extend_from_slice(&value[(_val.leading_zeros() / 8) as usize..value.len()]);
-            //add blank space
-            write_buf.push(0);
-        }
-        value_file.write_all(&write_buf);
-
-        file_count += 1;
-    }
-    file.write_all(&amount_of_entries_as_slice);
+    let mut value_file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(file_location + VALUES)
+        .unwrap();
+    value_file.write_all(&write_bytes_for_value);
 }
-/*
-Not needed anymore,
-It was used to store the file as a tree like structure
-But I realized that searching a tree and using binary search is just as fast..., since they are basically the same.
-Both start at median value and then accesses the median for half of the current size and so on.
 
-My claim is backed by SO: https://stackoverflow.com/questions/5968937/binary-search-vs-binary-search-tree
-
-/// Returns the len of the string with the longest name, the biggest usize(value), and a vec containing the tree sorted as we want to write it.
-/// Destroys the passed vector.
-fn sort_into_tree(vec: &mut Vec<(String, usize)>) -> (usize, usize, Vec<(String, usize)>) {
-    if vec.len() == 1 {
-        (vec[0].0.len(), vec[0].1, vec.clone())
-    } else {
-        let mut _return_vec = Vec::new();
-
-        let mut second_half = vec.split_off(1 + (vec.len() / 2));
-
-        _return_vec.push(vec.pop().unwrap());
-
-        if vec.len() > second_half.len() {
-            // we want to make sure there is the same amount of elements on each side of the root. So we add a empty line here
-            // It also works as a stop block, kinda not fully.
-            second_half.push((String::new(), 0));
-        }
-
-        let ret_lower = sort_into_tree(vec);
-        _return_vec.extend(ret_lower.2);
-
-        let ret_higher = sort_into_tree(&mut second_half);
-        _return_vec.extend(ret_higher.2);
-        (
-            ret_lower.0.max(ret_higher.0),
-            ret_lower.1.max(ret_higher.1),
-            _return_vec,
-        )
+//convert to bytes with the limit
+// we need to conserve 0 as a seperator.
+fn convert_to_base_255_as_bytes(value: usize) -> Vec<u8> {
+    let mut base255: Vec<u8> = Vec::new();
+    let mut amount_of_digits = 1;
+    while value >= 255_usize.pow(amount_of_digits) {
+        amount_of_digits += 1;
     }
-}
-*/
-
-//converts a usize to a vec with u8 such that they are in base u8::MAX
-fn convert_to_u8_but_werid(value: usize) -> Vec<u8> {
-    let mut _vec: Vec<u8> = Vec::new();
-    let mut _current_val = 0;
-    loop {
-        if _current_val + u8::MAX as usize >= value {
-            //we can safely just push the rest
-            _vec.push((value - _current_val) as u8);
-            return _vec;
-        } else {
-            _vec.push(u8::MAX);
-            _current_val += u8::MAX as usize;
-        }
+    let mut current_left = value;
+    for i in (0..amount_of_digits).rev() {
+        let _val = current_left / 255_usize.pow(i as u32);
+        base255.push(_val as u8 + 1);
+        current_left -= _val * 255_usize.pow(i);
     }
+
+    //print!("Converted {} to {:?}\n", value, base255);
+    base255
 }

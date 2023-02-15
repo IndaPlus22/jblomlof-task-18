@@ -11,10 +11,11 @@ const KORPUS_FILE: &str = "helper_files/korpus";
 /* THE PLACE WHERE THIS COMPILER DUMP ALL THE FILES*/
 const FILE_LOCATION: &str = "helper_files/index_files/";
 
-/* Whatever really, EXCEPT NUMBER */
-const MASTER: &str = "MASTER";
+/* Whatever really*/
+const KEYS: &str = "KEYS";
+const VALUES: &str = "VALUES";
 
-const AMOUNT_OF_CONTEXT_ON_EACH_SIDE: usize = 20;
+const AMOUNT_OF_CONTEXT_ON_EACH_SIDE: usize = 30;
 const AMOUNT_TO_PRINT_STANDARD: usize = 25;
 mod compile_files;
 mod hash_func;
@@ -45,6 +46,11 @@ fn main() {
     let args = Args::parse();
     let command = args.command.to_lowercase();
 
+    //testing purpose
+    /*let _v = vec![10000368, 10017347, 10047993, 10058693];
+    yeet_out_korpus_content(&_v,1);
+    return;*/
+
     if command.starts_with('_') {
         compile_files::compile_that_shit();
     } else {
@@ -55,11 +61,11 @@ fn main() {
 fn find_instances(word: &str) {
     let start = Instant::now();
     let word_latin_one = map_from_io_to_latin(word);
-    let hash = lazy_hash(&word_latin_one).to_string();
-    let mut duration_to_answer = Duration::new(0,0);
-    if let Some(index) = get_index_file_nr(&word_latin_one, &hash) {
-        //now we got the index file. Read it and then read korpus.
-        let positions = read_index_file(index, &hash);
+    let hash = lazy_hash(&word_latin_one).to_string() + "/";
+    let mut duration_to_answer = Duration::new(0, 0);
+    if let Some((len, pointer)) = get_index(&word_latin_one, &hash) {
+        //now we got the index. Read it and then read korpus.
+        let positions = read_index(len, pointer, &hash);
         if positions.len() == 0 {
             panic!("Word not found, but at werid stage. Advise recompiling.");
         }
@@ -69,7 +75,10 @@ fn find_instances(word: &str) {
         println!("Word not found.")
     }
 
-    println!("It took: {} ms", (start.elapsed() - duration_to_answer).as_millis())
+    println!(
+        "It took: {} ms",
+        (start.elapsed() - duration_to_answer).as_millis()
+    )
 }
 
 /// Returns (amount_of_entries, len_of_entry, header_size)
@@ -84,14 +93,7 @@ fn get_header_info(file: &mut File) -> (usize, usize, usize) {
         }
         bytes.push(read_byte[0]);
     }
-    let amount_of_entries: usize = {
-        // simply .iter().sum() doesnt work so doing it manually
-        let mut sum = 0;
-        for val in &bytes {
-            sum += *val as usize;
-        }
-        sum
-    };
+    let amount_of_entries: usize = convert_from_weird_base255(&bytes);
     header_size += bytes.len();
     bytes = Vec::new();
 
@@ -103,15 +105,9 @@ fn get_header_info(file: &mut File) -> (usize, usize, usize) {
         }
         bytes.push(read_byte[0]);
     }
-    let len_of_entry: usize = {
-        // simply .iter().sum() doesnt work so doing it manually
-        let mut sum = 0;
-        for val in &bytes {
-            sum += *val as usize;
-        }
-        sum
-    };
+    let len_of_entry: usize = convert_from_weird_base255(&bytes);
     header_size += bytes.len();
+
     (amount_of_entries, len_of_entry, header_size)
 }
 
@@ -120,30 +116,26 @@ fn r_exact(file: &mut File, at: usize, amount: usize) -> Vec<u8> {
     let mut byte: [u8; 1] = [0];
     let mut bytes: Vec<u8> = Vec::with_capacity(amount);
     file.seek(SeekFrom::Start(at as u64)).unwrap();
-    
+
     for _ in 0..amount {
         if file.read_exact(&mut byte).is_err() {
             bytes.resize(amount, 0);
-            return bytes
+            return bytes;
         }
-        
+
         bytes.push(byte[0]);
     }
 
     bytes
 }
 
-/// Returns Some(<index>) or None
-fn get_index_file_nr(word: &str, hash_str: &str) -> Option<usize> {
-    let word_latin_one: Vec<u8> = word
-        .as_bytes()
-        .iter()
-        .map(|x| *x)
-        .collect();
+/// Returns Some(len, pointer) or None
+fn get_index(word: &str, hash_str: &str) -> Option<(usize, usize)> {
+    let word_latin_one: Vec<u8> = word.as_bytes().iter().map(|x| *x).collect();
 
     let mut list_file = OpenOptions::new()
         .read(true)
-        .open(FILE_LOCATION.to_string() + hash_str + "/" + MASTER)
+        .open(FILE_LOCATION.to_string() + hash_str + KEYS)
         .unwrap();
 
     let (amount_of_entries, len_of_entry, header_size) = get_header_info(&mut list_file);
@@ -151,7 +143,7 @@ fn get_index_file_nr(word: &str, hash_str: &str) -> Option<usize> {
     // OK so we have read header and stored amount of entries and len of entry and size of header.
     // Time to binary search the file.
     if len_of_entry < word_latin_one.len() {
-        // all words in file are less chars than word, no way it exists.
+        // all lines in file are less chars than word, no way it exists.
         println!("Word does not exist");
         return None;
     }
@@ -160,7 +152,7 @@ fn get_index_file_nr(word: &str, hash_str: &str) -> Option<usize> {
     let mut search_pointer = amount_of_entries / 2;
     loop {
         let pos = header_size + len_of_entry * search_pointer;
-        let current_word = r_exact(&mut list_file, pos, len_of_entry);
+        let current_word = r_exact(&mut list_file, pos, word_latin_one.len() + 1);
 
         let mut flag = Flag::Equal;
         for i in 0..word_latin_one.len() {
@@ -174,7 +166,7 @@ fn get_index_file_nr(word: &str, hash_str: &str) -> Option<usize> {
                 break;
             }
         }
-        if flag == Flag::Equal && word_latin_one.len() < len_of_entry {
+        if flag == Flag::Equal {
             if current_word[word_latin_one.len()] != 0 {
                 flag = Flag::Left;
             }
@@ -182,7 +174,7 @@ fn get_index_file_nr(word: &str, hash_str: &str) -> Option<usize> {
 
         match flag {
             Flag::Equal => {
-                return Some(search_pointer);
+                return get_len_and_pointer(&mut list_file, pos, len_of_entry);
             }
 
             Flag::Left => {
@@ -208,27 +200,37 @@ fn get_index_file_nr(word: &str, hash_str: &str) -> Option<usize> {
     }
 }
 
-/// Returns the byte positions for the words.
-fn read_index_file(index: usize, hash_str: &str) -> Vec<usize> {
-    let _path = FILE_LOCATION.to_string() + hash_str + "/" + &index.to_string();
+//helper for when get_index returns correctly.
+fn get_len_and_pointer(file: &mut File, pos: usize, len_of_entry: usize) -> Option<(usize, usize)> {
+    let buf = r_exact(file, pos, len_of_entry);
+
+    let mut _iter = buf.split(|x| *x == 0).skip(1).filter(|x| x.len() > 0);
+
+    let len_to_read = _iter.next().unwrap();
+    let pointer = _iter.next().unwrap_or(&[1]);
+    assert!(_iter.next().is_none());
+
+    Some((
+        convert_from_weird_base255(&len_to_read.to_vec()),
+        convert_from_weird_base255(&pointer.to_vec()),
+    ))
+}
+
+/// Returns the byte positions for the words. that is in korpus
+fn read_index(len: usize, pointer: usize, hash_str: &str) -> Vec<usize> {
+    let _path = FILE_LOCATION.to_string() + hash_str + VALUES;
     let mut value_file = OpenOptions::new().read(true).open(_path).unwrap();
-    let mut read_bytes = Vec::new();
-    value_file.read_to_end(&mut read_bytes).unwrap();
-    let mut value_as_bytes = Vec::new();
-    let mut result = Vec::new();
-    for byte in read_bytes {
-        if byte == 0 {
-            assert!(value_as_bytes.len() > 0);
-            let mut sum = 0;
-            for (index, val) in value_as_bytes.iter().rev().enumerate() {
-                sum += (u8::MAX as usize + 1).pow(index as u32) * (*val) as usize;
-            }
-            value_as_bytes = Vec::new();
-            result.push(sum);
+
+    let read_bytes= r_exact(&mut value_file, pointer, len);
+    let _iter = read_bytes.split(|x| *x == 0);
+    let mut res = Vec::new();
+    for pos in _iter {
+        if pos.len() == 0 {
+            continue;
         }
-        value_as_bytes.push(byte);
+        res.push(convert_from_weird_base255(&pos.to_vec()));
     }
-    result
+    res
 }
 
 fn yeet_out_korpus_content(offsets: &Vec<usize>, word_len: usize) -> Duration {
@@ -280,3 +282,14 @@ fn yeet_out_korpus_content(offsets: &Vec<usize>, word_len: usize) -> Duration {
     }
     duration_to_answer
 }
+
+fn convert_from_weird_base255(bytes: &Vec<u8>) -> usize {
+    let mut sum = 0;
+
+    for (i, val) in bytes.iter().rev().enumerate() {
+        sum += (u8::MAX as usize).pow(i as u32) * ((*val) - 1) as usize;
+    }
+
+    sum
+}
+
