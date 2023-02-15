@@ -5,7 +5,8 @@ ___18 &lt; 17___
 ## update
 Faster working version with inspiration from how Toshi (sakao) structured his files.
 
-Using some more disk space tho...
+Using some more disk space tho...  
+but no longer creating 400_000 files.
 
 ## Finished
 This was a great experience. As Im writing this Im still fuming about tht `token.txt` not being sensible. TBH I should've just done my own.
